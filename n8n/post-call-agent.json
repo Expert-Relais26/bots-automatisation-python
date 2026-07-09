@@ -1,0 +1,172 @@
+{
+  "name": "Agent Post-Call (Fireflies -> Gmail + Slack)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "post-call-agent",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "6b1a2f1e-0001-4c1a-9a1a-000000000001",
+      "name": "Webhook - Fin d'appel (Fireflies)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-800, 0],
+      "webhookId": "post-call-agent"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"query Transcript($id: String!) { transcript(id: $id) { title dateString participants organizer_email sentences { speaker_name text } summary { overview action_items keywords } } }\", variables: { id: $json.meetingId || $json.body.meetingId } }) }}",
+        "options": {}
+      },
+      "id": "6b1a2f1e-0002-4c1a-9a1a-000000000002",
+      "name": "Fireflies - Recuperer le transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-560, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Fireflies API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const t = $input.first().json.data.transcript;\n\nconst transcriptText = (t.sentences || [])\n  .map(s => `${s.speaker_name}: ${s.text}`)\n  .join('\\n');\n\nreturn [{\n  json: {\n    title: t.title,\n    date: t.dateString,\n    organizerEmail: t.organizer_email,\n    participants: t.participants || [],\n    overview: t.summary && t.summary.overview,\n    actionItems: t.summary && t.summary.action_items,\n    transcriptText\n  }\n}];"
+      },
+      "id": "6b1a2f1e-0003-4c1a-9a1a-000000000003",
+      "name": "Formater le transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-320, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"anthropic/claude-3.5-sonnet\", messages: [ { role: \"system\", content: \"Tu es un assistant commercial. A partir de la transcription d'un appel client, produis UNIQUEMENT un JSON valide avec exactement ces cles: email_subject, email_body (email de suivi personnalise et professionnel, en francais, pret a etre envoye), coaching_note (note sur 10), coaching_points (liste a puces des axes d'amelioration pour le commercial). Aucun texte hors du JSON.\" }, { role: \"user\", content: `Titre: ${$json.title}\\nParticipants: ${JSON.stringify($json.participants)}\\nResume: ${$json.overview}\\n\\nTranscription:\\n${$json.transcriptText}` } ], response_format: { type: \"json_object\" } }) }}",
+        "options": {}
+      },
+      "id": "6b1a2f1e-0004-4c1a-9a1a-000000000004",
+      "name": "OpenRouter - Generer email + coaching",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-80, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "OpenRouter API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.choices[0].message.content;\nconst parsed = JSON.parse(raw);\nconst transcript = $('Formater le transcript').first().json;\n\nreturn [{\n  json: {\n    ...parsed,\n    organizerEmail: transcript.organizerEmail,\n    meetingTitle: transcript.title\n  }\n}];"
+      },
+      "id": "6b1a2f1e-0005-4c1a-9a1a-000000000005",
+      "name": "Extraire email + coaching",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [160, 0]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "={{ $json.email_subject }}",
+        "message": "={{ $json.email_body }}",
+        "options": {
+          "sendTo": "={{ $json.organizerEmail }}"
+        }
+      },
+      "id": "6b1a2f1e-0006-4c1a-9a1a-000000000006",
+      "name": "Gmail - Creer le brouillon",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [420, -100],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "text": "=📞 *Recap coaching - {{ $json.meetingTitle }}*\\n\\n*Note:* {{ $json.coaching_note }}/10\\n\\n*Axes d'amelioration:*\\n{{ $json.coaching_points }}",
+        "otherOptions": {}
+      },
+      "id": "6b1a2f1e-0007-4c1a-9a1a-000000000007",
+      "name": "Slack - Recap coaching",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [420, 100],
+      "credentials": {
+        "slackApi": {
+          "id": "",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Fin d'appel (Fireflies)": {
+      "main": [
+        [
+          { "node": "Fireflies - Recuperer le transcript", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fireflies - Recuperer le transcript": {
+      "main": [
+        [
+          { "node": "Formater le transcript", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Formater le transcript": {
+      "main": [
+        [
+          { "node": "OpenRouter - Generer email + coaching", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "OpenRouter - Generer email + coaching": {
+      "main": [
+        [
+          { "node": "Extraire email + coaching", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extraire email + coaching": {
+      "main": [
+        [
+          { "node": "Gmail - Creer le brouillon", "type": "main", "index": 0 },
+          { "node": "Slack - Recap coaching", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

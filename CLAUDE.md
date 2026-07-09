@@ -33,3 +33,7 @@ There are no lint, test, or build commands configured in this repo.
 
 - Comments and UI copy are in French; keep new comments/UI text consistent with that unless told otherwise.
 - Deployment target is Streamlit Cloud (per the comment in `app.py` about configuring secrets there).
+
+## n8n/ directory
+
+`n8n/post-call-agent.json` is an importable N8N workflow export (unrelated to the Streamlit app's runtime) implementing a post-call automation: Fireflies transcript → OpenRouter-generated follow-up email drafted in Gmail → coaching recap posted to Slack. See `n8n/README.md` for import steps and required credentials. No API keys are stored in this repo — credentials are attached inside N8N after import.
